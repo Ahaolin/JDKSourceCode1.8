@@ -1284,6 +1284,10 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * <pre>
+     *     AQS获取共享资源时可被中断的方法
+     * </pre>
+     *
      * Acquires in shared mode, aborting if interrupted.  Implemented
      * by first checking interrupt status, then invoking at least once
      * {@link #tryAcquireShared}, returning on success.  Otherwise the
@@ -1298,10 +1302,10 @@ public abstract class AbstractQueuedSynchronizer
      */
     public final void acquireSharedInterruptibly(int arg)
             throws InterruptedException {
-        if (Thread.interrupted())
+        if (Thread.interrupted()) // 如果线程被中断则抛出异常
             throw new InterruptedException();
         if (tryAcquireShared(arg) < 0)
-            doAcquireSharedInterruptibly(arg);
+            doAcquireSharedInterruptibly(arg); // 进入AQS的等待队列
     }
 
     /**
@@ -1339,6 +1343,7 @@ public abstract class AbstractQueuedSynchronizer
      */
     public final boolean releaseShared(int arg) {
         if (tryReleaseShared(arg)) {
+            // AQS的释放资源的方法
             doReleaseShared();
             return true;
         }

@@ -37,6 +37,23 @@ package java.util.concurrent;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
+ * <pre>
+ *     这里总结下CountDownLatch与join方法的区别。
+ *     1. 调用一个子线程的join()方法后，该线程会一直被阻塞直到子线程运行完毕，而CountDownLatch则使用计数器来允许子线程运行完毕或者在运行中递减计数，
+ *     也就是CountDownLatch可以在子线程运行的任何时候让await方法返回而不一定必须等到线程结束。
+ *     2. 另外，使用线程池来管理线程时一般都是直接添加Runnable到线程池，这时候就没有办法再调用线程的join方法了，就是说countDownLatch相比join方法让我们对线程同步有更灵活的控制。
+ * </pre>
+ *
+ * <pre>
+ * CountDownLatch内部应该有一个计数器(递减)。
+ *   1.使用AQS实现，通过{@link #CountDownLatch(int)} 计数器的值就是AQS的state变量。
+ *   2.当线程调用{@link #await()}后当前线程会被放入AQS的阻塞队列等待计数器为0再返回。
+ *   3.当多个线程调用{@link #countDown()}实际上是原子性递减AQS的状态值。当计数器变为0时,
+ *   当前线程还要调用{@link AbstractQueuedSynchronizer#doReleaseShared()}来激活那些{@link #await()}方法
+ *   而被阻塞的线程。
+ * </pre>
+ *
+ *
  * A synchronization aid that allows one or more threads to wait until
  * a set of operations being performed in other threads completes.
  *
@@ -152,6 +169,11 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  *
  * @since 1.5
  * @author Doug Lea
+ *
+ * @see #await()
+ * @see #await(long, TimeUnit)
+ * @see #countDown()
+ * @see #getCount()
  */
 public class CountDownLatch {
     /**
@@ -169,18 +191,22 @@ public class CountDownLatch {
             return getState();
         }
 
+        // sync类实现的AQS接口
         protected int tryAcquireShared(int acquires) {
             return (getState() == 0) ? 1 : -1;
         }
 
+        // sync类实现的AQS接口
         protected boolean tryReleaseShared(int releases) {
             // Decrement count; signal when transition to zero
+            // 循环进行CAS,直到当前线程成功完成CAS使计数器值(状态值state)减1 并更新到state
             for (;;) {
                 int c = getState();
-                if (c == 0)
+                if (c == 0) // (1) 防止多次调用countDown()使得state变为负数
                     return false;
                 int nextc = c-1;
-                if (compareAndSetState(c, nextc))
+                if (compareAndSetState(c, nextc)) // (2) 使用cas让计数器减1
+                    // 等于0，AbstractQueuedSynchronizer#doReleaseShared才会唤醒await()方法阻塞的线程
                     return nextc == 0;
             }
         }
@@ -201,6 +227,21 @@ public class CountDownLatch {
     }
 
     /**
+     * <pre>
+     *  当线程调用对象的await方法后，当前线程会被阻塞，直到下面的情况之一发生才会返回：
+     *     1.当所有线程都调用了CountDownLatch对象的countDown方法后，也就是计数器的值为0时；
+     *     2.其他线程调用了当前线程的interrupt（）方法中断了当前线程，当前线程就会抛出InterruptedException异常，然后返回。
+     * </pre>
+     *
+     * <p>
+     * 该方法的特点是线程获取资源时可以被中断，并且获取的资源是共享资源。
+     * {@link AbstractQueuedSynchronizer#acquireSharedInterruptibly(int)}首先判断当前线程是否己被中断，
+     * 若是则抛出异常，否则调用sync实现的{@link Sync#tryAcquireShared(int)}查看当前状态值（计数器值）是否为0，
+     * 是则当前线程的await()方法直接返回，否则调用 {@link AbstractQueuedSynchronizer#doAcquireInterruptibly(int)}
+     * 让当前线程阻塞。
+     * 另外可以看到，这里{@link AbstractQueuedSynchronizer#tryAcquireShared(int)}传递的arg参数没有被用到，调用该方法仅仅是为了检查当前状态值是不是为0，并没有调用CAS让当前状态值减1。
+     * </p>
+     *<br>
      * Causes the current thread to wait until the latch has counted down to
      * zero, unless the thread is {@linkplain Thread#interrupt interrupted}.
      *
@@ -228,10 +269,22 @@ public class CountDownLatch {
      *         while waiting
      */
     public void await() throws InterruptedException {
+        /*
+              查看当前当前计数器值是否为0，为0直接返回，否则进入AQS的等待队列
+              if (tryAcquireShared(arg) < 0)
+                doAcquireSharedInterruptibly(arg); // 进入AQS的等待队列
+         */
         sync.acquireSharedInterruptibly(1);
     }
 
     /**
+     * <pre>
+     *  当线程调用了CountDownLatch对象的该方法后，当前线程会被阻塞，直到下面的情况之一发生才会返回：
+     *     1.当所有线程都调用了CountDownLatch对象的countDown方法后，也就是计数器的值为0时,这时候会返回true;
+     *     2.设置的timeout时间到了，因为超时而返回false;
+     *     3.其他线程调用了当前线程的interrupt()方法中断了当前线程，当前线程就会抛出InterruptedException异常，然后返回。
+     * </pre>
+     *
      * Causes the current thread to wait until the latch has counted down to
      * zero, unless the thread is {@linkplain Thread#interrupt interrupted},
      * or the specified waiting time elapses.
@@ -273,11 +326,15 @@ public class CountDownLatch {
      *         while waiting
      */
     public boolean await(long timeout, TimeUnit unit)
-        throws InterruptedException {
+            throws InterruptedException {
         return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
     }
 
     /**
+     * <pre>
+     *   线程调用该方法后，计数器的值递减，递减后如果计数器值为0则唤醒所有因调用{@link #await()}而被阻塞的线程，否则什么都不做。
+     * </pre>
+     *
      * Decrements the count of the latch, releasing all waiting threads if
      * the count reaches zero.
      *
@@ -288,10 +345,15 @@ public class CountDownLatch {
      * <p>If the current count equals zero then nothing happens.
      */
     public void countDown() {
+        // 委托Sync调用AQS的方法
         sync.releaseShared(1);
     }
 
     /**
+     * <pre>
+     *     获取当前计数器的值,也就是 AQS state值,一般在测试时使用该方法
+     * </pre>
+     *
      * Returns the current count.
      *
      * <p>This method is typically used for debugging and testing purposes.
