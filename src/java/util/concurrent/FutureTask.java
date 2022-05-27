@@ -37,6 +37,15 @@ package java.util.concurrent;
 import java.util.concurrent.locks.LockSupport;
 
 /**
+ * <pre>
+ *     可能的任务状态转换路径
+ *  NEW -> COMPLETING -> NORMAL          初始状态 -> 执行中 -> 正常结束
+ *  NEW -> COMPLETING -> EXCEPTIONAL     初始状态 -> 执行中 -> 执行异常
+ *  NEW -> CANCELED                      初始状态 -> 任务取消
+ *  NEW -> INTERRUPTING -> INTERRUPTED   初始状态 -> 被中断中 -> 被中断
+ *
+ * </pre>
+ *
  * A cancellable asynchronous computation.  This class provides a base
  * implementation of {@link Future}, with methods to start and cancel
  * a computation, query to see if the computation is complete, and
@@ -90,12 +99,19 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * NEW -> INTERRUPTING -> INTERRUPTED
      */
     private volatile int state;
+    /** 初始状态 **/
     private static final int NEW          = 0;
+    /** 执行中状态 **/
     private static final int COMPLETING   = 1;
+    /** 正常运行结束状态 **/
     private static final int NORMAL       = 2;
+    /** 运行中异常 **/
     private static final int EXCEPTIONAL  = 3;
+    /** 任务被取消 **/
     private static final int CANCELLED    = 4;
+    /** 任务正在被中断 **/
     private static final int INTERRUPTING = 5;
+    /** 任务已经被中断 **/
     private static final int INTERRUPTED  = 6;
 
     /** The underlying callable; nulled out after running */
@@ -137,6 +153,10 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     /**
+     * <pre>
+     *     通过适配器把runnable转换为callable
+     * </pre>
+     *
      * Creates a {@code FutureTask} that will, upon running, execute the
      * given {@code Runnable}, and arrange that {@code get} will return the
      * given result on successful completion.
@@ -163,8 +183,8 @@ public class FutureTask<V> implements RunnableFuture<V> {
 
     public boolean cancel(boolean mayInterruptIfRunning) {
         if (!(state == NEW &&
-              UNSAFE.compareAndSwapInt(this, stateOffset, NEW,
-                  mayInterruptIfRunning ? INTERRUPTING : CANCELLED)))
+                UNSAFE.compareAndSwapInt(this, stateOffset, NEW,
+                        mayInterruptIfRunning ? INTERRUPTING : CANCELLED)))
             return false;
         try {    // in case call to interrupt throws exception
             if (mayInterruptIfRunning) {
@@ -196,12 +216,12 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * @throws CancellationException {@inheritDoc}
      */
     public V get(long timeout, TimeUnit unit)
-        throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, ExecutionException, TimeoutException {
         if (unit == null)
             throw new NullPointerException();
         int s = state;
         if (s <= COMPLETING &&
-            (s = awaitDone(true, unit.toNanos(timeout))) <= COMPLETING)
+                (s = awaitDone(true, unit.toNanos(timeout))) <= COMPLETING)
             throw new TimeoutException();
         return report(s);
     }
@@ -227,8 +247,14 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * @param v the value
      */
     protected void set(V v) {
+        // 设置当前任务的状态为NEW,则设置为COMPLETING
         if (UNSAFE.compareAndSwapInt(this, stateOffset, NEW, COMPLETING)) {
+            /*
+                请思考个问题，在什么时候多个线程会同时执行CAS将当前任务的状态从NEW转换到COMPLETING？
+                其实当同一个command被多次提交到线程池时就会存在这样的情况，因为同一个任务共享一个状态值
+             */
             outcome = v;
+            // 设置当前任务的状态为NORMAL,也就是任务正常结束（只有一个线程可以执行到这里）
             UNSAFE.putOrderedInt(this, stateOffset, NORMAL); // final state
             finishCompletion();
         }
@@ -245,18 +271,27 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * @param t the cause of failure
      */
     protected void setException(Throwable t) {
+        // 如果当前任务的状态为为NEW,则设置为COMPLETING
         if (UNSAFE.compareAndSwapInt(this, stateOffset, NEW, COMPLETING)) {
             outcome = t;
+            // 设置当前任务的状态为EXCEPTIONAL，也就是任务非正常结束
             UNSAFE.putOrderedInt(this, stateOffset, EXCEPTIONAL); // final state
             finishCompletion();
         }
     }
 
     public void run() {
+        /**
+         *  (12) 判断如果任务状态不是NEW则直接返回，或者如果当前任务状态为NEW但是使用CAS设置当前任务的持有者为当前线程失败则直接返回。
+         */
         if (state != NEW ||
-            !UNSAFE.compareAndSwapObject(this, runnerOffset,
-                                         null, Thread.currentThread()))
+                !UNSAFE.compareAndSwapObject(this, runnerOffset,
+                        null, Thread.currentThread()))
             return;
+        /**
+         *  (13) 具体调用callable的call方法执行任务。这里在调用前又判断了任务的状态是否为NEW，
+         *  是为了避免在执行代码（12）后其他线程修改了任务的状态(比如取消了该任务)。
+         */
         try {
             Callable<V> c = callable;
             if (c != null && state == NEW) {
@@ -268,8 +303,10 @@ public class FutureTask<V> implements RunnableFuture<V> {
                 } catch (Throwable ex) {
                     result = null;
                     ran = false;
+                    // (13.1) 执行失败
                     setException(ex);
                 }
+                // (13.2) 任务执行成功，修改任务状态
                 if (ran)
                     set(result);
             }
@@ -295,10 +332,13 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * @return {@code true} if successfully run and reset
      */
     protected boolean runAndReset() {
+        // (17) 判断如果任务状态不是NEW则直接返回，或者如果当前任务状态为NEW但是使用CAS设置当前任务的持有者为当前线程失败则直接返回。
         if (state != NEW ||
-            !UNSAFE.compareAndSwapObject(this, runnerOffset,
-                                         null, Thread.currentThread()))
+                !UNSAFE.compareAndSwapObject(this, runnerOffset,
+                        null, Thread.currentThread()))
             return false;
+        // (18)  具体调用callable的call方法执行任务。这里在调用前又判断了任务的状态是否为NEW，
+        //       是为了避免在执行代码（17）后其他线程修改了任务的状态(比如取消了该任务)。
         boolean ran = false;
         int s = state;
         try {
@@ -321,7 +361,11 @@ public class FutureTask<V> implements RunnableFuture<V> {
             if (s >= INTERRUPTING)
                 handlePossibleCancellationInterrupt(s);
         }
-        return ran && s == NEW;
+        /**
+         * 相比较 run()方法，此处只多了(19)
+         * 这段代码判断 如果当前任务正常执行完毕并且任务状态为 NEW 则返回 true 则返回 false
+         */
+        return ran && s == NEW; // (19)
     }
 
     /**
@@ -394,7 +438,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * @return state upon completion
      */
     private int awaitDone(boolean timed, long nanos)
-        throws InterruptedException {
+            throws InterruptedException {
         final long deadline = timed ? System.nanoTime() + nanos : 0L;
         WaitNode q = null;
         boolean queued = false;
@@ -416,7 +460,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
                 q = new WaitNode();
             else if (!queued)
                 queued = UNSAFE.compareAndSwapObject(this, waitersOffset,
-                                                     q.next = waiters, q);
+                        q.next = waiters, q);
             else if (timed) {
                 nanos = deadline - System.nanoTime();
                 if (nanos <= 0L) {
@@ -455,7 +499,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
                             continue retry;
                     }
                     else if (!UNSAFE.compareAndSwapObject(this, waitersOffset,
-                                                          q, s))
+                            q, s))
                         continue retry;
                 }
                 break;
@@ -473,11 +517,11 @@ public class FutureTask<V> implements RunnableFuture<V> {
             UNSAFE = sun.misc.Unsafe.getUnsafe();
             Class<?> k = FutureTask.class;
             stateOffset = UNSAFE.objectFieldOffset
-                (k.getDeclaredField("state"));
+                    (k.getDeclaredField("state"));
             runnerOffset = UNSAFE.objectFieldOffset
-                (k.getDeclaredField("runner"));
+                    (k.getDeclaredField("runner"));
             waitersOffset = UNSAFE.objectFieldOffset
-                (k.getDeclaredField("waiters"));
+                    (k.getDeclaredField("waiters"));
         } catch (Exception e) {
             throw new Error(e);
         }
