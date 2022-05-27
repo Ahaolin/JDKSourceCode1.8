@@ -64,6 +64,17 @@ import java.util.*;
  *          当前线程在60s内空闲则回收。这个类型的特殊之处在于，加入同步队列的任务会被马上执行，同步队列里面最多只有一个任务。
  * </pre>
  *
+ * <pre>
+ *  线程池运行逻辑
+ *    本次只分析{@link #execute(Runnable)},submit其实差不多。
+ *     线程池默认逻辑是：
+ *        1. 先执行addWorker(),此时是核心线程 见(3)。
+ *        2. 添加失败，执行添加队列。见(4)
+ *        3. 队列已满，添加最大线程数创建工作线程执行。
+ *       上述的关键逻辑其实就是{@link #addWorker(Runnable, boolean)}方法。
+ *       <a href='https://blog.csdn.net/ctwctw/article/details/117407152'>runWorker方法的各个细节</a>
+ * </pre>
+ *
  *
  * An {@link ExecutorService} that executes each submitted task using
  * one of possibly several pooled threads, normally configured
@@ -434,9 +445,9 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     /** 获取高3位(运行状态) **/
     private static int runStateOf(int c)     { return c & ~CAPACITY; }
     /** 获取低29位(线程数量) **/
-    private static int ctlOf(int rs, int wc) { return rs | wc; }
-    /** 计算ctl新值(线程状态与线程个数) **/
     private static int workerCountOf(int c)  { return c & CAPACITY; }
+    /** 计算ctl新值(线程状态与线程个数) **/
+    private static int ctlOf(int rs, int wc) { return rs | wc; }
 
     /*
      * Bit field accessors that don't require unpacking ctl.
@@ -1154,9 +1165,15 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         // (11.2) 尝试设置线程池状态为TERMINATED
         tryTerminate();
 
-        // (11.3) 如果当前线程个数小于核心个数,则增加
+        /*
+         * (11.3)  下面这段代码的含义是如果线程池是RUNNING或者SHUTDOWN状态的话，
+         * 且任务顺利完成（completedAbruptly=false）的话，那么判断是否设置了允许核心线程超时
+         * 如果允许核心线程超时，且任务队列不等于空的话，那么开启一个线程来执行任务。
+         *
+         * 一言以蔽之：如果线程池是RUNNING或者SHUTDOWN状态的话，且任务队列不是空，那么至少保证线程池中有一个线程在执行任务
+         */
         int c = ctl.get();
-        if (runStateLessThan(c, STOP)) { // == RUNNING
+        if (runStateLessThan(c, STOP)) {
             if (!completedAbruptly) {
                 int min = allowCoreThreadTimeOut ? 0 : corePoolSize;
                 if (min == 0 && ! workQueue.isEmpty())
@@ -1169,6 +1186,13 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     }
 
     /**
+     *
+     * <pre>
+     *     从队列中获取任务，如果timed是true的话，则调用阻塞队列的poll方法阻塞一段时间获取任务，
+     *     这段时间没任务的话，则超时设置timeOut=true，结束生命周期。
+     *     否则调用take()方法一直阻塞等待任务到来，也就是核心线程为什么能一直存活的原因。
+     * </pre>
+     *
      * Performs blocking or timed wait for a task, depending on
      * current configuration settings, or returns null if this worker
      * must exit because of any of:
@@ -1224,6 +1248,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     }
 
     /**
+     * <pre>
+     *     调用Worker.thread.start()执行的方法
+     * </pre>
+     *
      * Main worker run loop.  Repeatedly gets tasks from queue and
      * executes them, while coping with a number of issues:
      *
@@ -1270,7 +1298,12 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         Thread wt = Thread.currentThread();
         Runnable task = w.firstTask;
         w.firstTask = null;
-        w.unlock(); // (9) 将state设置为0，允许中断 allow interrupts
+        /**
+         *  (9) 将state设置为0，允许中断
+         *      因为{@link Worker#state} 初始时为 -1，为了避免当前 Worker在调用runWorker前被中断
+         *      (当其他线程调用了线程池的shutdownNow时，如果Worker状态>=0则会中断该线程)。
+         */
+        w.unlock(); // allow interrupts
         boolean completedAbruptly = true;
         try {
             /**
@@ -1322,6 +1355,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
             completedAbruptly = false;
         } finally {
             // (11) 执行清理工作
+            // 如果任务正常执行，没有任何异常，此处为true,否则为false
             processWorkerExit(w, completedAbruptly);
         }
     }
@@ -1821,13 +1855,19 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     }
 
     /**
+     * <pre>
+     *     至少保证一个线程在线程池运行
+     * </pre>
+     *
      * Same as prestartCoreThread except arranges that at least one
      * thread is started even if corePoolSize is 0.
      */
     void ensurePrestart() {
         int wc = workerCountOf(ctl.get());
+        // 增加核心线程数
         if (wc < corePoolSize)
             addWorker(null, true);
+        // 如果初始化corePoolSize==0,则也添加一个线程
         else if (wc == 0)
             addWorker(null, false);
     }
