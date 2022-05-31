@@ -38,6 +38,19 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
+ * <pre>
+ *     相比较{@link CountDownLatch}的计数器是一次性的，等到计数器变为0后，再调用{@link CountDownLatch#countDown()}、{@link CountDownLatch#await()} 都会立刻返回。
+ *     满足计数器可以重置的需要，{@link CyclicBarrier}可以让一组线程全部达到一个状态后再全部同时执行。【回环屏障】
+ *     这里之所以叫做【回环】是因为当所有等待线程执行完毕，并调用{@link CyclicBarrier#reset()} ,它就可以被重新使用。
+ *        之所以叫做【屏障】是因为线程调用{@link #await()}方法会被阻塞，这个阻塞点就被称之为<b>屏障点</b>，等所有线程都调用了await方法后，线程就会冲破屏障，继续线下运行
+ * </pre>
+ *
+ *<pre>
+ *    CycleBarrier与CountDownLatch的不同在于，前者是可以复用的，并且前者特别适合分段任务有序执行的场。
+ *    然后CycleBa1Tier，其通过独占锁实现计数器原子性更新，并使用条件变量队列来实现线程同步。
+ *</pre>
+ *
+ *
  * A synchronization aid that allows a set of threads to all wait for
  * each other to reach a common barrier point.  CyclicBarriers are
  * useful in programs involving a fixed sized party of threads that
@@ -135,6 +148,10 @@ import java.util.concurrent.locks.ReentrantLock;
  * @see CountDownLatch
  *
  * @author Doug Lea
+ *
+ * @see #await()
+ * @see #await(long, TimeUnit)
+ * @see #dowait(boolean, long)
  */
 public class CyclicBarrier {
     /**
@@ -149,21 +166,48 @@ public class CyclicBarrier {
      * but no subsequent reset.
      */
     private static class Generation {
+
+        /**
+         <pre>
+         *     {@link #generation#broken} 其用来记录当前屏障是否被打破。
+         *     没有被声明为volatile的原因，是锁内使用变量
+         * </pre>
+         */
         boolean broken = false;
     }
 
-    /** The lock for guarding barrier entry */
+
+    /**
+     * <pre>
+     *     使用lock首先保证了更新计数器count的原子性。
+     *     另外使用lock的条件变量trip支持线程间使用await和signal操作进行同步。
+     * </pre>
+     *
+     * The lock for guarding barrier entry
+     */
     private final ReentrantLock lock = new ReentrantLock();
     /** Condition to wait on until tripped */
     private final Condition trip = lock.newCondition();
-    /** The number of parties */
+
+    /**（始终记录总的线程个数） The number of parties */
     private final int parties;
-    /* The command to run when tripped */
+
+    /**
+     * <pre>
+     * 这是一个任务，这个任务的执行时机是当所有线程都到达屏障点后。
+     * </pre>
+     *
+     * The command to run when tripped
+     */
     private final Runnable barrierCommand;
     /** The current generation */
     private Generation generation = new Generation();
 
     /**
+     * <pre>
+     *     初始话等于{@link #parties}，使用{@link #await()}后会递减1，当count为0就表示所有线程都到达屏障点。会把{@link #parties}赋值给count重新使用
+     * </pre>
+     *
      * Number of parties still waiting. Counts down from parties to 0
      * on each generation.  It is reset to parties on each new
      * generation or when broken.
@@ -198,6 +242,15 @@ public class CyclicBarrier {
     private int dowait(boolean timed, long nanos)
         throws InterruptedException, BrokenBarrierException,
                TimeoutException {
+        /*
+                以上是dowait方法的主干代码。当一个线程调用了dowait方法后，首先会获取独占锁lock，如果创建CycleBarrier时传递的参数为10，那么后面9个调用线程会被阻塞。
+            然后当前获取到锁的线程会对计数器count进行递减操作，递减后count=index=9，因为index！=0所以当前线程会执行代码（4）。
+            如果当前线程调用的是无参数的await()方法，则这里timed=false，所以当前线程会被放入条件变量trip的条件阻塞队列，当前线程会被挂起并释放获取的lock锁。
+            如果调用的是有参数的await方法则timed=true，然后当前线程也会被放入条件变量的条件队列并释放锁资源，不同的是当前线程会在指定时间超时后自动被激活。
+                最后一个线程获取lock锁，此时己经有9个线程被放入了条件变量trip的条件队列里面。
+            最后count=index等于0，所以执行代码（2），如果创建时传递了任务，则在其他线程被唤醒前先执行任务，任务执行完毕后再执行代码（3），唤醒其他9个线程，
+            并重置CyclicBarrier，然后这10个线程就可以继续向下运行了。
+         */
         final ReentrantLock lock = this.lock;
         lock.lock();
         try {
@@ -211,14 +264,17 @@ public class CyclicBarrier {
                 throw new InterruptedException();
             }
 
+            // (1) 如果index == 0则说明所有线程都到了屏障点，此时执行初始化传递的任务
             int index = --count;
             if (index == 0) {  // tripped
                 boolean ranAction = false;
                 try {
+                    // (2) 执行任务
                     final Runnable command = barrierCommand;
                     if (command != null)
                         command.run();
                     ranAction = true;
+                    // (3) 激活其他因调用await()方法而阻塞的线程，并重置CyclicBarrier
                     nextGeneration();
                     return 0;
                 } finally {
@@ -226,12 +282,14 @@ public class CyclicBarrier {
                         breakBarrier();
                 }
             }
-
+            // (4) 如果index!=0
             // loop until tripped, broken, interrupted, or timed out
             for (;;) {
                 try {
+                    // (5) 没有设置超时时间
                     if (!timed)
                         trip.await();
+                    // (6) 设置了超时时间
                     else if (nanos > 0L)
                         nanos = trip.awaitNanos(nanos);
                 } catch (InterruptedException ie) {
@@ -304,6 +362,15 @@ public class CyclicBarrier {
     }
 
     /**
+     * <pre>
+     *  当前线程调用CyclicBeamer的该方法时会被阻塞，直到满足下面条件之一才会返回：
+     *    · parties个线程都调用了{@link #await()}方法，也就是线程都到了屏障点；
+     *    · 其他线程调用了当前线程的{@link Thread#interrupt()}方法中断了当前线程，则当前线程会抛出InterruptedException异常而返回；
+     *    · 与当前屏障点关联的Generation对象的broken标志被设置为true时，会抛出{@link BrokenBarrierException}异常，然后返回。
+     * </pre>
+     *
+     *
+     *
      * Waits until all {@linkplain #getParties parties} have invoked
      * {@code await} on this barrier.
      *
@@ -359,6 +426,7 @@ public class CyclicBarrier {
      */
     public int await() throws InterruptedException, BrokenBarrierException {
         try {
+            // timed为false 说明不设置超时时间， 第2个参数此时没有意义
             return dowait(false, 0L);
         } catch (TimeoutException toe) {
             throw new Error(toe); // cannot happen
@@ -366,6 +434,14 @@ public class CyclicBarrier {
     }
 
     /**
+     * <pre>
+     *  当前线程调用CyclicBarrier的该方法时会被阻塞，直到满足下面条件之一才会返回：
+     *    · parties个线程都调用了await()方法，也就是线程都到了屏障点，这时候返回true；
+     *    · 设置的超时时间到了后返回false；
+     *    · 其他线程调用当前线程的{@link Thread#interrupt()}中断了当前线程，则当前线程会抛出{@link InterruptedException}异常然后返回；
+     *    · 与当前屏障点关联的Generation对象的broken标志被设置为true时，会抛出{@link BrokenBarrierException}异常，然后返回。
+     * </pre>
+     *
      * Waits until all {@linkplain #getParties parties} have invoked
      * {@code await} on this barrier, or the specified waiting time elapses.
      *
@@ -432,6 +508,7 @@ public class CyclicBarrier {
         throws InterruptedException,
                BrokenBarrierException,
                TimeoutException {
+        // timed 设置超时时间， 超时时间
         return dowait(true, unit.toNanos(timeout));
     }
 
