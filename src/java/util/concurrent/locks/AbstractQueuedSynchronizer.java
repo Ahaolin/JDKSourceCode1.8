@@ -1285,7 +1285,7 @@ public abstract class AbstractQueuedSynchronizer
 
     /**
      * <pre>
-     *     AQS获取共享资源时可被中断的方法
+     *     AQS获取共享资源时可被中断的方法(如果当前线程被中断，则抛出中断异常)
      * </pre>
      *
      * Acquires in shared mode, aborting if interrupted.  Implemented
@@ -1305,6 +1305,7 @@ public abstract class AbstractQueuedSynchronizer
         if (Thread.interrupted()) // 如果线程被中断则抛出异常
             throw new InterruptedException();
         if (tryAcquireShared(arg) < 0)
+            // 如果获取失败则放入阻塞队列。然后再次尝试，如果失败则调用park方法挂起当前线程
             doAcquireSharedInterruptibly(arg); // 进入AQS的等待队列
     }
 
@@ -1342,8 +1343,9 @@ public abstract class AbstractQueuedSynchronizer
      * @return the value returned from {@link #tryReleaseShared}
      */
     public final boolean releaseShared(int arg) {
+        // 尝试释放资源
         if (tryReleaseShared(arg)) {
-            // AQS的释放资源的方法
+            // AQS的释放资源的方法（资源释放成功则调用park方法唤醒AQS队列里面最先挂起的线程）
             doReleaseShared();
             return true;
         }

@@ -38,6 +38,14 @@ import java.util.Collection;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
+ * <pre>
+ * Semaphore信号量也是Java中的一个同步器，与CountDownLatch和CycIeBarrier不同的是，它内部的计数器是递增的，并且在一开始初始化semaphore时可以指定一个初始值，但是并不需要知道需要同步的线程个数，而是在需要同步的地方调用{@link #acquire}时指定需要同步的线程个数。
+ * Semaphore还是使用AQS实现的。Sync只是对AQS的一个修饰，并且有两个实现类，用来指定获取信号量时是否采用公．平策略。 Semaphore默认采用非公平策略，如果需要使用公平策略则可以使用带两个参数的构造函数来构造semaphore对象。
+ * 另外，如CountDownLatch构造函数传递的初始化信号量个数permits被赋给了AQS的state状态变量一样，这里AQS的state值也表示当前持有的信号量个数。
+ * </pre>
+ *
+ *
+ *
  * A counting semaphore.  Conceptually, a semaphore maintains a set of
  * permits.  Each {@link #acquire} blocks if necessary until a permit is
  * available, and then takes it.  Each {@link #release} adds a permit,
@@ -152,6 +160,13 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  *
  * @since 1.5
  * @author Doug Lea
+ *
+ * @see #acquire()
+ * @see #acquire(int)
+ * @see #acquireUninterruptibly()
+ * @see #acquireUninterruptibly(int)
+ * @see #release()
+ * @see #release(int)
  */
 public class Semaphore implements java.io.Serializable {
     private static final long serialVersionUID = -3222578661600680210L;
@@ -176,8 +191,12 @@ public class Semaphore implements java.io.Serializable {
 
         final int nonfairTryAcquireShared(int acquires) {
             for (;;) {
+                // 获取当前信号量值
                 int available = getState();
+                // 计算当前剩余值(剩余的信号量个数) = 当前信号量值 - 需要获取的值(acquires)
                 int remaining = available - acquires;
+                // 如果当前剩余值小于0(当前信号量个数满足不了需求,直接返回负数，这时当前线程会被放入AQS的阻塞队列而被挂起)
+                //OR CAS设置成功直接返回 剩余值
                 if (remaining < 0 ||
                     compareAndSetState(available, remaining))
                     return remaining;
@@ -186,12 +205,17 @@ public class Semaphore implements java.io.Serializable {
 
         protected final boolean tryReleaseShared(int releases) {
             for (;;) {
+                // (4） 获取当前信号量值
                 int current = getState();
+
+                // (5) 将当前信号量值增加releases,这里增加1
                 int next = current + releases;
-                if (next < current) // overflow
+                if (next < current) // overflow 移除处理
                     throw new Error("Maximum permit count exceeded");
+                // (6) 使用cas保证更新信号量的原子性
                 if (compareAndSetState(current, next))
                     return true;
+                // 执行成功 返回true会执行AbstractQueuedSynchronizer#doReleaseShared(), 即用AQS的方法来激活因为调用acquire方法而阻塞的线程
             }
         }
 
@@ -242,6 +266,8 @@ public class Semaphore implements java.io.Serializable {
 
         protected int tryAcquireShared(int acquires) {
             for (;;) {
+                // 公平策略通过hasQueuedPredecessors方法来保证。
+                // 公平策略是看当前线程节点的前驱节点是否也在等待获取该资源，如果是则自己放弃获取的权限，然后当前线程会被放入AQS阻塞队列，否则就去获取。
                 if (hasQueuedPredecessors())
                     return -1;
                 int available = getState();
@@ -281,6 +307,10 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * <pre>
+     * 当前线程调用该方法的目的是希望获取一个信号量资源。如果当前信号量个数大于0，当前信号量的计数会减1，然后该方法直接返回。否则如果当前信号量个数等于0，则当前线程会被放入AQS的阻塞队列。当其他线程调用了当前线程的interrupt方法中断了当前线程时，则当前线程会抛出InterruptedException异常返回。
+     * </pre>
+     *
      * Acquires a permit from this semaphore, blocking until one is
      * available, or the thread is {@linkplain Thread#interrupt interrupted}.
      *
@@ -307,12 +337,20 @@ public class Semaphore implements java.io.Serializable {
      * interrupted status is cleared.
      *
      * @throws InterruptedException if the current thread is interrupted
+     *
+     * @see NonfairSync#tryAcquireShared(int)
+     * @see FairSync#tryAcquireShared(int)
      */
     public void acquire() throws InterruptedException {
+        // 传递参数为1，说明要获取1个信号量资源
         sync.acquireSharedInterruptibly(1);
     }
 
     /**
+     * <pre>
+     *     该方法与{@link #acquire()}类似，不同之处在于该方法对中断不响应，也就是当当前线程调用了{@link #acquireUninterruptibly()}获取资源时（包含被阻塞后），其他线程调用了当前线程的{@link Thread#interrupt()}方法设置了当前线程的中断标志，此时当前线程并不会抛出InterruptedException异常而返回。
+     * </pre>
+     *
      * Acquires a permit from this semaphore, blocking until one is
      * available.
      *
@@ -410,6 +448,10 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * <pre>
+     * 该方法的作用是把当前Semaphore对象的信号量值增加1，如果当前有线程因为调用{@link #acquire()}被阻塞而被放入了AQS的阻塞队列，则会根据公平策略选择一个信号量个数能被满足的线程进行激活，激活的线程会尝试获取刚增加的信号量。
+     * </pre>
+     *
      * Releases a permit, returning it to the semaphore.
      *
      * <p>Releases a permit, increasing the number of available permits by
@@ -423,10 +465,14 @@ public class Semaphore implements java.io.Serializable {
      * in the application.
      */
     public void release() {
-        sync.releaseShared(1);
+        sync.releaseShared(1); // (1) arg=1
     }
 
     /**
+     * <pre>
+     *     该方法与{@link #acquire()}不同，后者只需要获取一个信号量值，而前者则获取permits个
+     * </pre>
+     *
      * Acquires the given number of permits from this semaphore,
      * blocking until all are available,
      * or the thread is {@linkplain Thread#interrupt interrupted}.
@@ -468,6 +514,10 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * <pre>
+     *     该方法与{@link #acquire(int)}方法的不同之处在于，该方法对中断不响应。
+     * </pre>
+     *
      * Acquires the given number of permits from this semaphore,
      * blocking until all are available.
      *
@@ -583,6 +633,10 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * <pre>
+     *     该方法与不带参数的{@link #release()}方法的不同之处在于，前者每次调用会在信号量值原来的基础上增加permits，而后者每次增加1。
+     * </pre>
+     *
      * Releases the given number of permits, returning them to the semaphore.
      *
      * <p>Releases the given number of permits, increasing the number of
