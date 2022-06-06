@@ -52,3 +52,7 @@
 
 
 <a href="https://github.com/wupeixuan/JDKSourceCode1.8/blob/master/src/sun/misc/Unsafe.java">💛Unsafe 源码解析</a>
+
+<a href="https://github.com/wupeixuan/JDKSourceCode1.8/blob/master/src/java/util/Random.java">💛Random 源码解析</a>
+
+<a href="https://github.com/wupeixuan/JDKSourceCode1.8/blob/master/src/java/util/concurrent/ThreadLocalRandom.java">💛💛ThreadLocalRandom 源码解析</a>

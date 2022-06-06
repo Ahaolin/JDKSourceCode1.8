@@ -50,6 +50,38 @@ import java.util.stream.StreamSupport;
 import sun.misc.VM;
 
 /**
+ * <pre>
+ *     为了弥补多线程高并发情况下{@link Random}的缺陷，在JUC包下新增了该类。下面首先看下如何使用它。
+ *
+ *     public static void main(String[] args) {
+ *         // (10) 获取一个随机数生成器
+ *         ThreadLocalRandom random = ThreadLocalRandom.current();
+ *
+ *         // (11) 输出10个在0~5(包含0不包含5)之间的随机数
+ *         for (int i = 0; i < 10; i++) {
+ *             System.out.println(random.nextInt(5));
+ *         }
+ *     }
+ * 下面来分析下ThreadLocalRandom的实现原理。从名字上看它会让我们联想到{@link ThreadLocal}：
+ *     ThreadLocal通过让每一个线程复制一份变量，使得在每个线程对变量进行操作时实际是操作自己本地内存里面的副本，从而避免了对共享变量进行同步,实际上ThreadLocalRandom的实现也是这个原理。
+ *     Random的缺点是多个线程会使用同一个原子性种子变量，从而导致对原子变量更新的竞争。
+ *     ThreadLocalRandom原理 ：那么，如果每个线程都维护一个种子变量，则每个线程生成随机数时都根据自己老的种子计算新的种子，并使用新种子更新老的种子，再根据新种子计算随机数，就不会存在竞争问题了，这会大大提高并发性能。
+ * </pre>
+ *
+ * <pre>
+ *     ThreadLocalRandom类继承了Random类并重写了{@link #nextInt(int)}方法，在ThreadLocalRandom类中并没有使用继承自Random类的原子性种子变量。
+ * 在ThreadLocalRandom中并没有存放具体的种子，具体的种子存放在具体的调用线程的{@link Thread#threadLocalRandomSeed}变量里面。
+ * ThreadLocalRandom类似于ThreadLocal类，就是个工具类。当线程调用{@link #current()}方法时，ThreadLocalRandom负责初始化调用线程的{@link Thread#threadLocalRandomSeed}变量，也就是初始化种子。
+ *
+ *    当调用{@link #nextInt()}方法时，实际上是获取当前线程的{@link Thread#threadLocalRandomSeed}变量作为当前种子来计算新的种子，
+ * 然后更新新的种子到当前线程的{@link Thread#threadLocalRandomSeed}变量，而后再根据新种子并使用具体算法计算随机数。
+ * 这里需要注意的是，{@link Thread#threadLocalRandomSeed}变量就是Thread类里面的一个普通long变量，它并不是原子性变量。
+ * 其实道理很简单，因为这个变量是线程级别的，所以根本不需要使用原子性变量，如果你还是不理解可以思考下ThreadLocal的原理。
+ *
+ *    其中{@link #seeder}和{@link #probeGenerator}是两个原子性变量，在初始化调用线程的种子和探针变量时会用到它们，每个线程只会使用一次。
+ * </pre>
+ *
+ *
  * A random number generator isolated to the current thread.  Like the
  * global {@link java.util.Random} generator used by the {@link
  * java.lang.Math} class, a {@code ThreadLocalRandom} is initialized
@@ -77,8 +109,19 @@ import sun.misc.VM;
  * seed unless the {@linkplain System#getProperty system property}
  * {@code java.util.secureRandomSeed} is set to {@code true}.
  *
+ * <pre>
+ * ThreadLocalRandom使用ThreadLocal的原理，让每个线程都持有一个本地的种子变量，该种子变量只有在使用随机数时才会被初始化。
+ * 在多线程下计算新种子时是根据自己线程内维护的种子变量进行更新，从而避免了竞争。
+ * </pre>
+ *
  * @since 1.7
  * @author Doug Lea
+ *
+ * @see Random
+ *
+ * @see ThreadLocalRandom#UNSAFE
+ * @see ThreadLocalRandom#current()
+ * @see ThreadLocalRandom#nextInt(int)
  */
 public class ThreadLocalRandom extends Random {
     /*
@@ -197,6 +240,10 @@ public class ThreadLocalRandom extends Random {
     static final ThreadLocalRandom instance = new ThreadLocalRandom();
 
     /**
+     * <pre>
+     *  首先根据{@link #probeGenerator}计算当前线程中{@link Thread#threadLocalRandomProbe}的初始化值，然后根据{@link #seeder}计算当前线程的初始化种子，而后把这两个变量设置到当前线程。
+     * </pre>
+     *
      * Initialize Thread fields for the current thread.  Called only
      * when Thread.threadLocalRandomProbe is zero, indicating that a
      * thread local seed value needs to be generated. Note that even
@@ -213,14 +260,23 @@ public class ThreadLocalRandom extends Random {
     }
 
     /**
+     * <pre>
+     *     该方法获取ThreadLocalRandom实例，并初始化调用线程中的{@link Thread#threadLocalRandomSeed}和{@link Thread#threadLocalRandomProbe}变量。
+     * </pre>
+     *
      * Returns the current thread's {@code ThreadLocalRandom}.
      *
      * @return the current thread's {@code ThreadLocalRandom}
      */
     public static ThreadLocalRandom current() {
+        /**
+         * (12) 如果当前线程中{@link Thread#threadLocalRandomProbe}的变量值为0(默认情况下线程的这个变量值为0)，
+         *      则说明当前线程是第一次调用{@link #current()}方法，那么就需要调用{@link #localInit()}方法计算当前线程的初始化种子变量。
+         *      这里为了延初始化，在不需要使用随机数功能时就不初始化Thread类中的种子变量，这是一种优化。
+         */
         if (UNSAFE.getInt(Thread.currentThread(), PROBE) == 0)
-            localInit();
-        return instance;
+            localInit(); // (13)
+        return instance; // (14) 多个线程返回同一个实例
     }
 
     /**
@@ -235,6 +291,12 @@ public class ThreadLocalRandom extends Random {
             throw new UnsupportedOperationException();
     }
 
+    /**
+     * <pre>
+     *  首先使用r=UNSAFE.getLong(t，SEED)获取当前线程中{@link Thread#threadLocalRandomSeed}变量的值，
+     * 然后在种子的基础上累加{@link #GAMMA}值作为新种子，而后使用{@link sun.misc.Unsafe#putLong(long, long)}方法把新种子放入当前线程的{@link Thread#threadLocalRandomSeed}变量中。
+     * </pre>
+     */
     final long nextSeed() {
         Thread t; long r; // read and update per-thread seed
         UNSAFE.putLong(t = Thread.currentThread(), SEED,
@@ -338,6 +400,8 @@ public class ThreadLocalRandom extends Random {
     }
 
     /**
+     * <pre> 计算当前线程的下一个随机数 </pre>
+     *
      * Returns a pseudorandom {@code int} value between zero (inclusive)
      * and the specified bound (exclusive).
      *
@@ -347,9 +411,13 @@ public class ThreadLocalRandom extends Random {
      * @throws IllegalArgumentException if {@code bound} is not positive
      */
     public int nextInt(int bound) {
+        // (15) 参数校验
         if (bound <= 0)
             throw new IllegalArgumentException(BadBound);
+        // (16) 根据当前线程中的种子计算新的种子
         int r = mix32(nextSeed());
+
+        // (17) 根据新种子和bound计算随机数
         int m = bound - 1;
         if ((bound & m) == 0) // power of two
             r &= m;
@@ -1051,11 +1119,18 @@ public class ThreadLocalRandom extends Random {
 
     // Unsafe mechanics
     private static final sun.misc.Unsafe UNSAFE;
+
+    /** {@link Thread#threadLocalRandomSeed}变量在Thread实例里面的偏移量 */
     private static final long SEED;
+
+    /** {@link Thread#threadLocalRandomProbe}变量在Thread实例里面的偏移量 */
     private static final long PROBE;
+
+    /** {@link Thread#threadLocalRandomSecondarySeed}变量在Thread实例里面的偏移量, 在{@link java.util.concurrent.atomic.LongAdder}时会用到 */
     private static final long SECONDARY;
     static {
         try {
+            // 获取unsafe实例
             UNSAFE = sun.misc.Unsafe.getUnsafe();
             Class<?> tk = Thread.class;
             SEED = UNSAFE.objectFieldOffset
