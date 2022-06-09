@@ -40,6 +40,8 @@ package java.util.function;
 public interface LongBinaryOperator {
 
     /**
+     * <pre> 根据两个参数计算并返回一个值 </pre>
+     *
      * Applies this operator to the given operands.
      *
      * @param left the first operand

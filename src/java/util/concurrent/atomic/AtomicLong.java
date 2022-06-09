@@ -39,6 +39,10 @@ import java.util.function.LongBinaryOperator;
 import sun.misc.Unsafe;
 
 /**
+ * <pre>
+ *     AtomicLong是原子性递增或者递减类，其内部使用Unsafe来实现(非阻塞算法CAS)。
+ * </pre>
+ *
  * A {@code long} value that may be updated atomically.  See the
  * {@link java.util.concurrent.atomic} package specification for
  * description of the properties of atomic variables. An
@@ -50,15 +54,27 @@ import sun.misc.Unsafe;
  *
  * @since 1.5
  * @author Doug Lea
+ *
+ * @see #incrementAndGet()
+ * @see #decrementAndGet()
+ * @see #getAndIncrement()
+ * @see #getAndDecrement()
+ * @see #compareAndSet(long, long)
+ *
+ * @see LongAdder
  */
 public class AtomicLong extends Number implements java.io.Serializable {
     private static final long serialVersionUID = 1927816293512124184L;
 
     // setup to use Unsafe.compareAndSwapLong for updates
-    private static final Unsafe unsafe = Unsafe.getUnsafe();
+    private static final Unsafe unsafe = Unsafe.getUnsafe(); // (1) 获取Unsafe实例
+
+    /** (2) 存放变量value的偏移量 **/
     private static final long valueOffset;
 
     /**
+     * <pre>(3) 判断JVM是否支持Long类型无锁CAS</pre>
+     *
      * Records whether the underlying JVM supports lockless
      * compareAndSwap for longs. While the Unsafe.compareAndSwapLong
      * method works in either case, some constructions should be
@@ -74,11 +90,13 @@ public class AtomicLong extends Number implements java.io.Serializable {
 
     static {
         try {
+            // (4) 获取value在AtomicLong中的偏移量
             valueOffset = unsafe.objectFieldOffset
-                (AtomicLong.class.getDeclaredField("value"));
+                    (AtomicLong.class.getDeclaredField("value"));
         } catch (Exception ex) { throw new Error(ex); }
     }
 
+    /** (5) 实际变量值（注意volatile 多线程的可见性） **/
     private volatile long value;
 
     /**
@@ -164,6 +182,7 @@ public class AtomicLong extends Number implements java.io.Serializable {
     }
 
     /**
+     * <pre> (8)调用unsafe方法，原子性设置vue值为原始值+1，返回值为原始值 </pre>
      * Atomically increments by one the current value.
      *
      * @return the previous value
@@ -173,6 +192,7 @@ public class AtomicLong extends Number implements java.io.Serializable {
     }
 
     /**
+     * <pre> (9)调用unsafe方法，原子性设置value值为原始值-1，返回值为原始值 </pre>
      * Atomically decrements by one the current value.
      *
      * @return the previous value
@@ -192,6 +212,7 @@ public class AtomicLong extends Number implements java.io.Serializable {
     }
 
     /**
+     * <pre> (6)调用unsafe方法，原子性设置value值为原始值+1，返回值为递增后的值 </pre>
      * Atomically increments by one the current value.
      *
      * @return the updated value
@@ -201,6 +222,7 @@ public class AtomicLong extends Number implements java.io.Serializable {
     }
 
     /**
+     * <pre> (7)调用unsafe方法，原子性设置value值为原始值-1，返回值为递减之后的值 </pre>
      * Atomically decrements by one the current value.
      *
      * @return the updated value

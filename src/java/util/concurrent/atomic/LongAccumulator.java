@@ -38,6 +38,29 @@ import java.io.Serializable;
 import java.util.function.LongBinaryOperator;
 
 /**
+ * <pre>
+ *     <b> LongAdder类是LongAccumulator的一个特例，只是后者提供了更加强大的功能，可以让用户自定义累加规则。 </b>
+ * </pre>
+ *
+ * <p>
+ *   {@link LongAdder}类是LongAccumulator的一个特例，LongAccumulator比LongAdder的功能更强大。
+ *   上面提到，LongAdder其实是LongAccumulator的一个特例，调用LongAdder就相当于使用下面的方式调用LongAccumulator·
+ *     <pre>
+ *       LongAdder adder = new LongAdder();
+ *       LongAccumulator accumulator = new LongAccumulator(new LongBinaryOperator() {
+ *            @Override
+ *             public long applyAsLong(long left, long right) {
+ *                return left + right;
+ *             }
+ *        }, 0);
+ *    </pre>
+ *   LongAccumulator相比于LongAdder，可以为累加器提供非0的初始值，后者只能提供默认的0值。
+ *   另外，前者还可以指定累加规则，比如不进行累加而进行相乘，只需要在构造LongAccumulator时传入自定义的双目运算器即可，后者则内置累加的规则。
+ * </p><br>
+ *
+ *
+ *
+ *
  * One or more variables that together maintain a running {@code long}
  * value updated using a supplied function.  When updates (method
  * {@link #accumulate}) are contended across threads, the set of variables
@@ -76,6 +99,8 @@ import java.util.function.LongBinaryOperator;
  *
  * @since 1.8
  * @author Doug Lea
+ *
+ * @see #accumulate(long)
  */
 public class LongAccumulator extends Striped64 implements Serializable {
     private static final long serialVersionUID = 7249069246863182397L;
@@ -83,22 +108,38 @@ public class LongAccumulator extends Striped64 implements Serializable {
     private final LongBinaryOperator function;
     private final long identity;
 
+
     /**
      * Creates a new instance using the given accumulator function
      * and identity element.
-     * @param accumulatorFunction a side-effect-free function of two arguments
-     * @param identity identity (initial value) for the accumulator function
+     * @param accumulatorFunction a side-effect-free function of two arguments  双目运算器接口，其根据输入的两个参数返回一个计算值
+     * @param identity identity (initial value) for the accumulator function    LongAccumulator累加器的初始值
      */
     public LongAccumulator(LongBinaryOperator accumulatorFunction,
                            long identity) {
+
+//        LongAdder adder = new LongAdder(); // 类似
+//        LongAccumulator accumulator = new LongAccumulator(new LongBinaryOperator() {
+//            @Override
+//            public long applyAsLong(long left, long right) {
+//                return left + right;
+//            }
+//        }, 0);
         this.function = accumulatorFunction;
         base = this.identity = identity;
     }
 
     /**
-     * Updates with the given value.
+     * <pre>
+     *     LongAccumulator相比于LongAdder的不同在于，在调用 casBase时后者传递的是b+x,前者则使用了r=function.applyAsLong(b=base，x)来计算。
+     *     另外，前者在调用longAccumulate时传递的是function，而后者是null。
+     * </pre>
      *
+     * Updates with the given value.
      * @param x the value
+     *
+     * @see LongAdder#add(long)
+     * @see #longAccumulate(long, LongBinaryOperator, boolean)
      */
     public void accumulate(long x) {
         Cell[] as; long b, v, r; int m; Cell a;

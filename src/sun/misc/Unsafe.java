@@ -42,6 +42,9 @@ public final class Unsafe {
     private Unsafe() {
     }
 
+    /**
+     * {@link jdk.nashorn.internal.runtime.linker.Bootstrap}类加载可以使用该返回（rt.jar）
+     */
     @CallerSensitive
     public static Unsafe getUnsafe() {
         Class var0 = Reflection.getCallerClass();
