@@ -92,6 +92,8 @@ import java.util.function.Consumer;
  * @since 1.5
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
+ *
+ * @see CopyOnWriteArrayList 底层使用CopyOnWriteArrayList 注释省略
  */
 public class CopyOnWriteArraySet<E> extends AbstractSet<E>
         implements java.io.Serializable {
@@ -116,7 +118,7 @@ public class CopyOnWriteArraySet<E> extends AbstractSet<E>
     public CopyOnWriteArraySet(Collection<? extends E> c) {
         if (c.getClass() == CopyOnWriteArraySet.class) {
             @SuppressWarnings("unchecked") CopyOnWriteArraySet<E> cc =
-                (CopyOnWriteArraySet<E>)c;
+                    (CopyOnWriteArraySet<E>)c;
             al = new CopyOnWriteArrayList<E>(cc.al);
         }
         else {
@@ -421,7 +423,7 @@ public class CopyOnWriteArraySet<E> extends AbstractSet<E>
      */
     public Spliterator<E> spliterator() {
         return Spliterators.spliterator
-            (al.getArray(), Spliterator.IMMUTABLE | Spliterator.DISTINCT);
+                (al.getArray(), Spliterator.IMMUTABLE | Spliterator.DISTINCT);
     }
 
     /**
