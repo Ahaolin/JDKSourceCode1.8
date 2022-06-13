@@ -1,6 +1,6 @@
 # JDK 1.8 源码解析
 
-## 基础
+## 1. 基础
 
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/lang/String.java">String 源码</a>
 
@@ -10,7 +10,7 @@
 
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/concurrent/ThreadLocalRandom.java">💛💛ThreadLocalRandom 源码解析</a>
 
-## 集合
+## 2. 集合
 
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/ArrayList.java">ArrayList 源码解析</a>
 
@@ -21,7 +21,7 @@
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/Hashtable.java">Hashtable 源码解析</a>
 
 
-## 原子操作类
+## 3. 原子操作类
 > 原子操作类的原理大致都相同，只针对AtomicLong、LongAdder、LongAccumulator
 
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/concurrent/atomic/AtomicLong.java">💛💛AtomicLong 源码解析</a>
@@ -31,14 +31,17 @@
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/concurrent/atomic/LongAccumulator.java">💛💛LongAccumulator 源码解析</a>
 
 
-## 并发集合类
+## 4. 并发集合类
 > - 并发包中的并发List只有`CopyOnWriteArrayList`是一个线程安全的ArrayList，对其进行的修改操作都是在底层的一个复制的数组（快照）上进行的， 也就是使用了写时复制策略。
 >   - `CopyOnWriteArraySet`底层就是 使用`CopyOnWriteArrayList`
-
 
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/concurrent/ConcurrentHashMap.java">ConcurrentHashMap 源码解析</a>
 
 <a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/concurrent/CopyOnWriteArrayList.java">💛💛CopyOnWriteArrayList 源码解析</a>
+
+## 5. 锁
+<a href="https://github.com/Ahaolin/JDKSourceCode1.8/blob/master/src/java/util/concurrent/locks/LockSupport.java">💛💛LockSupport 源码解析</a>
+
 
 ## 线程
 

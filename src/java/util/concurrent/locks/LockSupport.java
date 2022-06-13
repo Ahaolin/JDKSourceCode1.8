@@ -1,42 +1,24 @@
 /*
- * ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- */
-
-/*
- *
- *
- *
- *
- *
  * Written by Doug Lea with assistance from members of JCP JSR-166
  * Expert Group and released to the public domain, as explained at
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
 package java.util.concurrent.locks;
+import org.junit.jupiter.api.Test;
 import sun.misc.Unsafe;
 
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
+ * <p>
+ *      JDK中的rt.jar包里面的LockSupport是个工具类，它的主要作用是挂起和唤醒线程，工具类是创建锁和其他同步类的基础。<br>
+ *      LockSupport类与每个使用它的线程都会关联一个许可证，在默认情况下调用LockSupport类的方法的线程是不持有许可证的。LockSupport是使用{@link Unsafe}类实现的 <br>
+ *      示例如下：{@link TestLockSupport}、{@link FIFOMutex}
+ * </p><br>
+ *
  * Basic thread blocking primitives for creating locks and other
  * synchronization classes.
  *
@@ -116,16 +98,29 @@ import sun.misc.Unsafe;
  *     LockSupport.unpark(waiters.peek());
  *   }
  * }}</pre>
+ *
+ * @see #park()
+ * @see #unpark(Thread)
+ * @see #parkNanos(long)
+ * @see #park(Object)
+ * @see #parkUntil(long)
  */
 public class LockSupport {
     private LockSupport() {} // Cannot be instantiated.
 
     private static void setBlocker(Thread t, Object arg) {
         // Even though volatile, hotspot doesn't need a write barrier here.
+        // 将arg
         UNSAFE.putObject(t, parkBlockerOffset, arg);
     }
 
     /**
+     * <p>
+     * 当一个线程调用unpark时，如果参数thread线程没有持有thread与LockSupport类关联的许可证，则让thread线程持有。
+     * 如果thread之前因调用park()而被挂起，则调用unpark后，该线程会被唤醒。
+     * 如果thread之前没有调用park,则调用unpark方法后，再调用park方法，其会立刻返回。
+     * </p><br>
+     *
      * Makes available the permit for the given thread, if it
      * was not already available.  If the thread was blocked on
      * {@code park} then it will unblock.  Otherwise, its next call
@@ -142,6 +137,8 @@ public class LockSupport {
     }
 
     /**
+     * 建议使用
+     *
      * Disables the current thread for thread scheduling purposes unless the
      * permit is available.
      *
@@ -170,10 +167,10 @@ public class LockSupport {
      * @since 1.6
      */
     public static void park(Object blocker) {
-        Thread t = Thread.currentThread();
-        setBlocker(t, blocker);
-        UNSAFE.park(false, 0L);
-        setBlocker(t, null);
+        Thread t = Thread.currentThread(); // 获取调用线程
+        setBlocker(t, blocker); // 获取该线程的 blocker变量
+        UNSAFE.park(false, 0L); // 挂起线程
+        setBlocker(t, null); // 线程被激活后清除blocker变量，因为一般都是在线程阻塞时才分析原因
     }
 
     /**
@@ -276,6 +273,18 @@ public class LockSupport {
     }
 
     /**
+     * <p>
+     *     如果调用park方法的线程己经拿到了与LockSupport关联的许可证，则调用LockSupport.park()时会马上返回，
+     *     否则调用线程会被禁止参与线程的调度，也就是会被阻寨挂起，直到发生下面3种情况中的某一个: （所以在调用park()方法时最好也使用循环判断的方式） <br>
+     *     - 其他线程以当前线程为目标调用{@link #unpark};             <br>
+     *     - 其他线程{@linkplain Thread#interrupt 中断}当前线程;     <br>
+     *     - 虚拟唤醒
+     *     <br>
+     *
+     *     需要注意的是，因调用park()方法而被阻塞的线程被其他线程中断而返回时并不会抛出InterruptedException异常。
+     * </p><br>
+     *
+     *
      * Disables the current thread for thread scheduling purposes unless the
      * permit is available.
      *
@@ -305,6 +314,18 @@ public class LockSupport {
     }
 
     /**
+     * <p>
+     *     如果调用park方法的线程己经拿到了与LockSupport关联的许可证，则调用LockSupport.park()时会马上返回，
+     *     否则调用线程会被禁止参与线程的调度，也就是会被阻寨挂起，直到发生下面4种情况中的某一个: （所以在调用park()方法时最好也使用循环判断的方式） <br>
+     *     - 其他线程以当前线程为目标调用{@link #unpark};             <br>
+     *     - 其他线程{@linkplain Thread#interrupt 中断}当前线程;     <br>
+     *     - 虚拟唤醒                                              <br>
+     *     - 调用线程被挂起nocos时间后修改为自动返回
+     *     <br>
+     *
+     *     需要注意的是，因调用park()方法而被阻塞的线程被其他线程中断而返回时并不会抛出InterruptedException异常。
+     * </p><br>
+     *
      * Disables the current thread for thread scheduling purposes, for up to
      * the specified waiting time, unless the permit is available.
      *
@@ -339,6 +360,11 @@ public class LockSupport {
     }
 
     /**
+     * <p>
+     *      这个方法和{@link #parkNanos(long)}的区别是，后者是从当前算等待nanos秒时间，而前者是指定一个时间点，
+     *      比如需要等到2017.12.11 11:00，则把议个时间点转换为从1970年到议个时问点的总毫秒数。
+     * </p><br>
+     *
      * Disables the current thread for thread scheduling purposes, until
      * the specified deadline, unless the permit is available.
      *
@@ -366,7 +392,7 @@ public class LockSupport {
      * upon return.
      *
      * @param deadline the absolute time, in milliseconds from the Epoch,
-     *        to wait until
+     *        to wait until <br> 时间单位为ms，该时间是从1970年到现在某一个时间点的毫秒值。
      */
     public static void parkUntil(long deadline) {
         UNSAFE.park(true, deadline);
@@ -401,14 +427,94 @@ public class LockSupport {
             UNSAFE = sun.misc.Unsafe.getUnsafe();
             Class<?> tk = Thread.class;
             parkBlockerOffset = UNSAFE.objectFieldOffset
-                (tk.getDeclaredField("parkBlocker"));
+                    (tk.getDeclaredField("parkBlocker"));
             SEED = UNSAFE.objectFieldOffset
-                (tk.getDeclaredField("threadLocalRandomSeed"));
+                    (tk.getDeclaredField("threadLocalRandomSeed"));
             PROBE = UNSAFE.objectFieldOffset
-                (tk.getDeclaredField("threadLocalRandomProbe"));
+                    (tk.getDeclaredField("threadLocalRandomProbe"));
             SECONDARY = UNSAFE.objectFieldOffset
-                (tk.getDeclaredField("threadLocalRandomSecondarySeed"));
+                    (tk.getDeclaredField("threadLocalRandomSecondarySeed"));
         } catch (Exception ex) { throw new Error(ex); }
     }
 
+
+    public class TestLockSupport {
+        @Test
+        public void test1(){
+            System.out.println("begin park");
+            LockSupport.park(); // 只会输出 “begin park” 就会阻塞
+            System.out.println("end park");
+        }
+
+        @Test
+        public void test2(){
+            System.out.println("begin park");
+            // 使当前线程获取先获取通行证
+            LockSupport.unpark(Thread.currentThread());
+            // 再吃锁住
+            LockSupport.park();
+            System.out.println("end park");
+            // 输出 "begin park"  "end park"
+        }
+
+        // 为了说明调用park方法后的线程被中断后会返回
+        @Test
+        public void test3() throws InterruptedException {
+            Thread thread = new Thread(()->{
+                System.out.println("child thread begin park!");
+                // 调用park方法，挂起自己，只有自己被中断才会退出循环
+                while (!Thread.currentThread().isInterrupted()){
+                    LockSupport.park();
+                }
+                System.out.println("child thread unpark!");
+            });
+
+            // 启动子线程
+            thread.start();
+            // 主线程休眠1s
+            Thread.sleep(1_000);
+            System.out.println("main thread begin park!");
+            // 中断子线程
+            thread.interrupt();
+        /*
+            输出
+            child thread begin park！
+            main thread begin unpark！
+            child thread unpark!
+         */
+        }
+    }
+
+    /**
+     * 先入先出的锁
+     */
+    public class FIFOMutex {
+
+        private final AtomicBoolean locked = new AtomicBoolean(false);
+        private final Queue<Thread> waiters = new ConcurrentLinkedQueue<>();
+
+        public void lock() {
+            boolean wasInterrupted = false;
+            Thread current = Thread.currentThread();
+            waiters.add(current);
+
+            // 只有队首的线程可以获取锁
+            while (waiters.peek() != current || !locked.compareAndSet(false, true)) {
+                // 如果当前线程不是队首或者当前锁己经被其他线程获取，则调用 park 方法挂起自己
+                LockSupport.park(this);
+
+                if (Thread.interrupted())
+                    wasInterrupted = true; //如果park方法是因为被中断而返回，则忽略中断，并且重置中断标志，做个标记
+            }
+            waiters.remove();
+            if (wasInterrupted)
+                current.interrupt(); // 判断标记，如果标记为true,则中断线程. 恢复中断
+        }
+
+        public void unlock() {
+            locked.set(false);
+            LockSupport.unpark(waiters.peek());
+        }
+
+    }
 }
