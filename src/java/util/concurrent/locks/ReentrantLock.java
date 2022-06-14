@@ -38,6 +38,31 @@ import java.util.concurrent.TimeUnit;
 import java.util.Collection;
 
 /**
+ * <p>
+ *      ReentrantLock是可重入的独占锁，同时只能有一个线程可以获取该锁，其他获取该锁的线程会被阻塞而被放入该锁的AQS阻塞队列里面。            <br>
+ *      ReentrantLock实现了{@link Lock}接口，有一个内部对象{@linkplain Sync Sync},Lock接口的种种实现实际上都是委派了内部对象Sync。   <br>
+ * {@linkplain Sync Sync}对象继承AQS，所以，从ReentrantLock最终还是使用AQS来实现的，并且根据参数来决定其内部是一个公平还是非公平锁，默认是非公平锁。
+ * {@linkplain Sync Sync}重写了{@linkplain Sync#tryRelease Sync#tryRelease}、{@linkplain Sync#isHeldExclusively Sync#isHeldExclusively}，
+ * 其子类{@linkplain NonfairSync NonfairSync}和{@linkplain FairSync FairSync}分别实现了获取锁的非公平与公平策略,
+ * 重写了{@linkplain Sync#lock Sync#lock}、{@linkplain Sync#tryAcquire Sync#tryAcquire}。                                 <br>
+ *      在这里，AQS的state状态值表示线程获取该锁的可重入次数，在默认情况下，state的值为0表示当前锁没有被任何线程持有。
+ * 当一个线程第一次获取该锁时会尝试使用CAS设置的值为1，如果CAS成功则当前线程获取了该锁，然后记录该锁的持有者为当前线程。
+ * 在该线程没有释放锁的情况下第二次获取该锁后，状态值被设置为2，这就是可重入次数。在该线程释放该锁时，会尝试使用CAS让状态值减1，如果减1后状态值为0，
+ * 则当前线程释放该锁。                                                                                                     <br>
+ * </p><br>
+ *
+ * <pre>
+ *     ReentrantLock的底层是使用AQS实现的可重入独占锁。在这里AQS状态值为0表示当前锁空闲，为大于等于1的值则说明该锁己经被占用。
+ *     该锁内部有公平与非公平实现，默认情况下是非公平的实现。另外，由于该锁是独占锁，所以某时只有一个线程可以获取该锁。
+ * </pre>
+ *
+ * @see #lock()
+ * @see #lockInterruptibly()
+ * @see #tryLock()
+ * @see #tryLock(long, TimeUnit)
+ * @see #unlock()
+ */
+/*
  * A reentrant mutual exclusion {@link Lock} with the same basic
  * behavior and semantics as the implicit monitor lock accessed using
  * {@code synchronized} methods and statements, but with extended
@@ -129,31 +154,37 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         final boolean nonfairTryAcquire(int acquires) {
             final Thread current = Thread.currentThread();
             int c = getState();
+            // (4) 当前AQS的状态值为0
             if (c == 0) {
-                if (compareAndSetState(0, acquires)) {
+                if (compareAndSetState(0, acquires)) { // cas加锁成功
                     setExclusiveOwnerThread(current);
                     return true;
                 }
             }
+            // (5) 当前线程是该锁持有者
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
-                if (nextc < 0) // overflow
+                if (nextc < 0) // overflow  nextc这里说明锁的可重入次数溢出了
                     throw new Error("Maximum lock count exceeded");
                 setState(nextc);
                 return true;
             }
+            // (6) 添加到AQS阻塞队列
             return false;
         }
 
         protected final boolean tryRelease(int releases) {
+            // (11) 如果不是锁持有者调用unlock则抛出异常
             int c = getState() - releases;
             if (Thread.currentThread() != getExclusiveOwnerThread())
                 throw new IllegalMonitorStateException();
             boolean free = false;
+            // (12) 如果当前可重入次数为0，则清空锁持有线程
             if (c == 0) {
                 free = true;
                 setExclusiveOwnerThread(null);
             }
+            // (13) 设置可重入次数为原始值-1
             setState(c);
             return free;
         }
@@ -186,7 +217,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
          * Reconstitutes the instance from a stream (that is, deserializes it).
          */
         private void readObject(java.io.ObjectInputStream s)
-            throws java.io.IOException, ClassNotFoundException {
+                throws java.io.IOException, ClassNotFoundException {
             s.defaultReadObject();
             setState(0); // reset to unlocked state
         }
@@ -203,9 +234,11 @@ public class ReentrantLock implements Lock, java.io.Serializable {
          * acquire on failure.
          */
         final void lock() {
+            // (1) CAS设置状态值
             if (compareAndSetState(0, 1))
-                setExclusiveOwnerThread(Thread.currentThread());
+                setExclusiveOwnerThread(Thread.currentThread()); // cas成功设置 该锁持有者为当前线程
             else
+                // (2) 调用AQS的acquire方法
                 acquire(1);
         }
 
@@ -231,13 +264,19 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         protected final boolean tryAcquire(int acquires) {
             final Thread current = Thread.currentThread();
             int c = getState();
+            // (7) 当前AQS的状态值为0
             if (c == 0) {
+                /*
+                    公平锁和非公平锁基本类似，区别就是(8)处的hasQueuedPredecessors()方法
+                 */
+                // (8) 公平性策略
                 if (!hasQueuedPredecessors() &&
-                    compareAndSetState(0, acquires)) {
+                        compareAndSetState(0, acquires)) {
                     setExclusiveOwnerThread(current);
                     return true;
                 }
             }
+            // (9) 当前线程是该锁的持有者
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
                 if (nextc < 0)
@@ -245,6 +284,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
                 setState(nextc);
                 return true;
             }
+            // (10) 添加到AQS的阻塞队列
             return false;
         }
     }
@@ -268,6 +308,13 @@ public class ReentrantLock implements Lock, java.io.Serializable {
     }
 
     /**
+     * <p>
+     *      当一个线程调用该方法时，说明该线程希望获取该锁。如果锁当前没有被其他线程占用并且当前线程之前没有获取过该锁，
+     * 则当前线程会获取到该锁，然后设置当前锁的拥有者为当前线程，并设置AQS的状态值为1，然后直接返回;
+     * 如果当前线程之前己经获取过该锁，则这次只是简单地把AQS的状态值加1后返回。如果该锁己经被其他线程持有，
+     * 则调用该方法的线程会被放入AQS队列后阻塞挂起。
+     * </p><br>
+     *
      * Acquires the lock.
      *
      * <p>Acquires the lock if it is not held by another thread and returns
@@ -280,12 +327,19 @@ public class ReentrantLock implements Lock, java.io.Serializable {
      * current thread becomes disabled for thread scheduling
      * purposes and lies dormant until the lock has been acquired,
      * at which time the lock hold count is set to one.
+     *
+     * @see NonfairSync#lock()
+     * @see FairSync#lock()
      */
     public void lock() {
         sync.lock();
     }
 
     /**
+     * <pre>
+     * 该方法与{@link #lock()}类似，它的不同在于，它对中断进行响应，就是当前线程在调用该方法时，如果其他线程调用了当前线程的{@link Thread#interrupt()}方法，则当前线程会抛出{@link InterruptedException}异常，然后返回。
+     * </pre>
+     *
      * Acquires the lock unless the current thread is
      * {@linkplain Thread#interrupt interrupted}.
      *
@@ -336,6 +390,10 @@ public class ReentrantLock implements Lock, java.io.Serializable {
     }
 
     /**
+     * <pre>
+     * 尝试获取锁，如果当前该锁没有被其他线程持有，则当前线程获取该锁并返回true，否则返回false。注意，该力法不会引起当前线程阻塞。
+     * </pre>
+     *
      * Acquires the lock only if it is not held by another thread at the time
      * of invocation.
      *
@@ -366,6 +424,10 @@ public class ReentrantLock implements Lock, java.io.Serializable {
     }
 
     /**
+     * <pre>
+     *     尝试获取锁，与{@link #tryLock()}的不同之处在于，它设置了超时时间，如果超时时间到没有获取到该锁则返回false,并且对中断响应
+     * </pre>
+     *
      * Acquires the lock if it is not held by another thread within the given
      * waiting time and the current thread has not been
      * {@linkplain Thread#interrupt interrupted}.
@@ -443,6 +505,11 @@ public class ReentrantLock implements Lock, java.io.Serializable {
     }
 
     /**
+     * <p>
+     * 尝试释放锁，如果当前线程持有该锁，则调用该方法会让该线程对该线程持有的AQS状态值减1，如果减去1后当前状态值为0，则当前线程会释放该锁，否则仅仅减1而己。
+     * 如果当前线程没有持有该锁而调用了该方法则会抛出IllegalMonitorStateException异常.
+     * </p><br>
+     *
      * Attempts to release this lock.
      *
      * <p>If the current thread is the holder of this lock then the hold
@@ -452,6 +519,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
      *
      * @throws IllegalMonitorStateException if the current thread does not
      *         hold this lock
+     * @see Sync#tryRelease(int)
      */
     public void unlock() {
         sync.release(1);
@@ -756,7 +824,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
     public String toString() {
         Thread o = sync.getOwner();
         return super.toString() + ((o == null) ?
-                                   "[Unlocked]" :
-                                   "[Locked by thread " + o.getName() + "]");
+                "[Unlocked]" :
+                "[Locked by thread " + o.getName() + "]");
     }
 }

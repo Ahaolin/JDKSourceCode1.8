@@ -165,9 +165,11 @@ import sun.misc.Unsafe;
  * </p>
  *<br>
  *
+ * <a href='https://zhuanlan.zhihu.com/p/197840259'>AQS基础-CLU锁</a>
  * <b> 两个自定义AQS示例： </b>
  * @see NoReentrantLock
  * @see ProConModel
+ *
  *
  */
  /*
@@ -1325,7 +1327,9 @@ public abstract class AbstractQueuedSynchronizer
      *        can represent anything you like.
      */
     public final void acquire(int arg) {
+        // 调用子类实现的tryAcquire方法，
         if (!tryAcquire(arg) &&
+                // tryAcquire返回false会把当前线程放入AQS阻塞队列
                 acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
             selfInterrupt();
     }
@@ -1346,9 +1350,12 @@ public abstract class AbstractQueuedSynchronizer
      */
     public final void acquireInterruptibly(int arg)
             throws InterruptedException {
+        // 如果当前线程被中断 则直接抛出异常
         if (Thread.interrupted())
             throw new InterruptedException();
+        // 尝试获取资源
         if (!tryAcquire(arg))
+            // 调用AQS可被中断的方法
             doAcquireInterruptibly(arg);
     }
 
@@ -1414,6 +1421,10 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * <pre>
+     *     AQS获取共享资源时可被中断的方法(如果当前线程被中断，则抛出中断异常)
+     * </pre>
+     *
      * Acquires in shared mode, aborting if interrupted.  Implemented
      * by first checking interrupt status, then invoking at least once
      * {@link #tryAcquireShared}, returning on success.  Otherwise the
@@ -1428,10 +1439,11 @@ public abstract class AbstractQueuedSynchronizer
      */
     public final void acquireSharedInterruptibly(int arg)
             throws InterruptedException {
-        if (Thread.interrupted())
+        if (Thread.interrupted()) // 如果线程被中断则抛出异常
             throw new InterruptedException();
         if (tryAcquireShared(arg) < 0)
-            doAcquireSharedInterruptibly(arg);
+            // 如果获取失败则放入阻塞队列。然后再次尝试，如果失败则调用park方法挂起当前线程
+            doAcquireSharedInterruptibly(arg); // 进入AQS的等待队列
     }
 
     /**
@@ -1468,7 +1480,9 @@ public abstract class AbstractQueuedSynchronizer
      * @return the value returned from {@link #tryReleaseShared}
      */
     public final boolean releaseShared(int arg) {
+        // 尝试释放资源
         if (tryReleaseShared(arg)) {
+            // AQS的释放资源的方法（资源释放成功则调用park方法唤醒AQS队列里面最先挂起的线程）
             doReleaseShared();
             return true;
         }
@@ -1597,6 +1611,10 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * <pre>
+     *     如果当前线程节点有前驱节点则返回true，否则如果当前AQS队列为空或者当前线程节点是AQS的第一个节点则返回false。
+     * </pre>
+     *
      * Queries whether any threads have been waiting to acquire longer
      * than the current thread.
      *
@@ -1646,8 +1664,17 @@ public abstract class AbstractQueuedSynchronizer
         Node t = tail; // Read fields in reverse initialization order
         Node h = head;
         Node s;
-        return h != t &&
-                ((s = h.next) == null || s.thread != Thread.currentThread());
+        return h != t && // (h ==t) 说明当前队列为空，直接返回false;
+                (// 先决条件 h!=t
+                        (s = h.next) == null ||  // 说明有一个元素将要作为AQS的第一个节点入队列（enq函数的第一个元素入队列是两步操作：首先创建一个哨兵头节点，然后将第一个元素插人哨兵节点后面），那么返回true;
+                                s.thread != Thread.currentThread() // h!=t && h.next!=null && s.thread != Thread.currentThread() 队列里面的第一个元素不是当前线程，那么返回true
+                );
+        /*
+         *  其中如果h=-t则说明当前队列为空，直接返回false;
+         *  如果h!=t并且s==null则说明有一个元素将要作为AQS的第一个节点入队列
+         *          （回顾前面的内容，enq函数的第一个元素入队列是两步操作：首先创建一个哨兵头节点，然后将第一个元素插人哨兵节点后面），那么返回true;
+         *  如果h!=t并且s!=null和s.thread!=Thread.currentThread()则说明队列里面的第一个元素不是当前线程，那么返回true。
+         */
     }
 
 
