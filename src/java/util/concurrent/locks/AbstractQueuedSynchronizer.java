@@ -106,7 +106,7 @@ import sun.misc.Unsafe;
  * 比如继承自AQS实现的独占锁在实现tryRelease时，在内部需要使用CAS算法去把当前的值从1修改为0，并设置当前锁的持有者为null，然后返回true，如果CAS失败则返回false。  <br>
  *
  *
- * 》》 》 <b> 在独占模式下，获取与释放资源的流程如下： </b>                                                                     <br>
+ * 》》 》 <b> 在共享模式下，获取与释放资源的流程如下： </b>                                                                     <br>
  *      (1) 当线程调用{@link #acquireShared}获取共享资源时，会首先使用{@link #tryAcquireShared}尝试获取资源，
  * 具体是设置状态变量state的值，成功则直接返回，失败则将当前线程封装为类型为{@link Node#SHARED}的Node节点后插入到AQS阻塞队列的尾部，并使用
  * {@link LockSupport#park(Object)}方法挂起自己。                                                                          <br>
@@ -1395,7 +1395,9 @@ public abstract class AbstractQueuedSynchronizer
      * @return the value returned from {@link #tryRelease}
      */
     public final boolean release(int arg) {
+        // 调用子类实现的tryRelease方法
         if (tryRelease(arg)) {
+            // 激活阻塞队列里面的一个线程
             Node h = head;
             if (h != null && h.waitStatus != 0)
                 unparkSuccessor(h);
@@ -1416,7 +1418,9 @@ public abstract class AbstractQueuedSynchronizer
      *        and can represent anything you like.
      */
     public final void acquireShared(int arg) {
+        // 调用子类实现的方法
         if (tryAcquireShared(arg) < 0)
+            // 调用AQS的doAcquireShared方法
             doAcquireShared(arg);
     }
 
