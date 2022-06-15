@@ -34,13 +34,15 @@
  */
 
 package java.util.concurrent.locks;
-import java.lang.annotation.Inherited;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.Collection;
 
 /**
  * <pre>
- *  解决线程安全问题使用ReentrantLock就可以，但是ReentrantLock是独占锁，某时只有一个线程可以获取该锁，而实际中会有写少读多的场景，
+ *  解决线程安全问题使用ReentrantLock就可以，但是ReentrantLock是独占锁，某时只有一个线程可以获取该锁，而实际中会有 <b>读多写少</b> 的场景，
  *  显然ReentrantLock满足不了这个需求，所以ReentrantReadWriteLock应运而生。ReentrantReadWriteLock采用读写分离的策略，允许多个线程可以同时获取读锁。
  * </pre>
  *
@@ -80,6 +82,7 @@ import java.util.Collection;
  *                            {@link ReadLock} -- 不支持 --> {@link Condition}
  * }
  * @see Sync
+ * @see TestReentrantReadWriteLock
  */
 /*
  * An implementation of {@link ReadWriteLock} supporting similar
@@ -1680,6 +1683,58 @@ public class ReentrantReadWriteLock
                     (tk.getDeclaredField("tid"));
         } catch (Exception e) {
             throw new Error(e);
+        }
+    }
+
+    /**
+     * 线程安全的List,适用于读多写少的的情况
+     */
+    static class TestReentrantReadWriteLock {
+
+        private ArrayList<String> array = new ArrayList<>();
+        // 独占锁
+        private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+        private final Lock readLock = lock.readLock();
+        private final Lock writeLock = lock.writeLock();
+
+        public void add(String e) {
+            writeLock.lock();
+            try {
+                array.add(e);
+            } finally {
+                writeLock.unlock();
+            }
+        }
+
+        public void remove(String e) {
+            writeLock.lock();
+            try {
+                array.remove(e);
+            } finally {
+                writeLock.unlock();
+            }
+        }
+
+        public String get(int index) {
+            readLock.lock();
+            try {
+                return array.get(index);
+            } finally {
+                readLock.unlock();
+            }
+        }
+
+        @Test
+        public void testDeadLock(){
+            // 测试死锁
+            readLock.lock();
+            writeLock.lock();
+            try {
+                System.out.println("死锁");
+            }finally {
+                readLock.unlock();
+                writeLock.unlock();
+            }
         }
     }
 
